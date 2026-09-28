@@ -1,9 +1,23 @@
 # This information is extracted from the MacOS runner specs located at:
-# https://github.com/actions/runner-images/blob/main/images/macos/macos-14-arm64-Readme.md
+# https://github.com/actions/runner-images/blob/main/images/macos/macos-15-arm64-Readme.md
 #
 # When updating, also ensure the "xcode_destination" entries in
 # `.github/workflows/test_objectivec.yml` are supported for the given versions
 # of Xcode.
+xcode_version(
+    name = "version16_4_16F6",
+    aliases = [
+        "16F6",
+        "16.4",
+    ],
+    default_ios_sdk_version = "18.5",
+    default_macos_sdk_version = "15.5",
+    default_tvos_sdk_version = "18.5",
+    default_watchos_sdk_version = "11.5",
+    version = "16.4",
+)
+
+
 xcode_version(
     name = "version16_0",
     aliases = [
