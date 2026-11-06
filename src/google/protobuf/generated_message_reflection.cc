@@ -1289,6 +1289,8 @@ void Reflection::Swap(Message* lhs, Message* rhs) const {
   // Check that both messages are in the same arena (or both on the heap). We
   // need to copy all data if not, due to ownership semantics.
   if (!internal::CanUseInternalSwap(lhs_arena, rhs_arena)) {
+    std::cerr << "Not internal swapping " << lhs_arena << " " << rhs_arena
+              << " for " << lhs->GetDescriptor()->full_name() << "\n";
     // One of the two is guaranteed to have an arena.  Switch things around
     // to guarantee that lhs has an arena.
     Arena* arena = lhs_arena;

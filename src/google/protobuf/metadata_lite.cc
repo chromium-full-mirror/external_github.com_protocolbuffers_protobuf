@@ -9,7 +9,7 @@
 
 #include <string>
 
-#include "google/protobuf/unknown_field_set.h"
+#include "google/protobuf/arena.h"
 
 namespace google {
 namespace protobuf {
@@ -30,8 +30,17 @@ void InternalMetadata::DoSwap<std::string>(std::string* other) {
   mutable_unknown_fields<std::string>()->swap(*other);
 }
 
-template UnknownFieldSet*
-InternalMetadata::mutable_unknown_fields_slow<UnknownFieldSet>();
+template <>
+void InternalMetadata::DeleteOutOfLineHelper<std::string>() {
+  delete PtrValue<Container<std::string>>();
+}
+
+template <>
+std::string* InternalMetadata::mutable_unknown_fields_slow<std::string>() {
+  Container<std::string>* container =
+      CreateFallbackContainer<std::string>(arena());
+  return &container->unknown_fields;
+}
 
 }  // namespace internal
 }  // namespace protobuf
