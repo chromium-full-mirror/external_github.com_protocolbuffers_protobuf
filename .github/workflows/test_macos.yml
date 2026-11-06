@@ -1,0 +1,250 @@
+name: macOS Tests
+
+# Runs every presubmit macOS test that already uses Bazel on a small number of
+# macos-15 runners. Each shard runs the same sequence of test steps, but each
+# step only tests its shard's slice of that step's targets. The slices come from
+# `bazel query` (see .github/scripts/shard_targets.sh) and are passed to
+# `bazel test --target_pattern_file`, so no package lists need to be curated.
+# To change the number of runners, edit the `shard` list below.
+#
+# Across all shards, each step tests exactly the targets, with the exact flags,
+# Bazel version, and cache key, that it had in its original workflow:
+#   - test_cpp.yml        `non-linux`                  (MacOS Bazel, MacOS Intel Bazel)
+#   - test_bazel.yml      `bazel-tests-windows-macos`  (Bazel Tests macos-15)
+#   - test_upb.yml        `macos`                      (macOS, macOS Intel)
+#   - test_python.yml     `macos`                      (MacOS Pure 3.12, MacOS C++ 3.12)
+#   - test_ruby.yml       `macos`                      (MacOS Ruby 4.0)
+#
+# Tests that need no host tooling run first. Host setup (Python, Ruby) runs
+# right before the first step that needed it originally, so earlier steps see
+# the same environment they had on their own runner. Every step after checkout
+# uses `!cancelled()` so one failing test doesn't skip the rest; the job still
+# fails if any step fails.
+#
+# The protobuf-ci/bazel action resets BAZEL_FLAGS on every invocation, so each
+# step gets only its own remote cache key.
+#
+# Not included: PHP conformance (stays on macos-15-intel in test_php.yml), and
+# continuous-only or non-Bazel macOS tests (unchanged in their original files).
+
+on:
+  workflow_call:
+    inputs:
+      safe-checkout:
+        required: true
+        description: "The SHA key for the commit we want to run over"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  bazel:
+    strategy:
+      fail-fast: false   # Don't cancel all shards if one fails.
+      matrix:
+        shard: [1, 2, 3]
+    name: macOS Bazel (shard ${{ matrix.shard }}/${{ strategy.job-total }})
+    runs-on: macos-15
+    env:
+      SHARD: ${{ matrix.shard }}
+      NUM_SHARDS: ${{ strategy.job-total }}
+    steps:
+      - name: Checkout pending changes
+        uses: protocolbuffers/protobuf-ci/checkout@v7
+        with:
+          ref: ${{ inputs.safe-checkout }}
+
+      # ---- No host tooling required (Bazel 8.7.0) ----
+
+      # Previously test_cpp.yml `non-linux` "MacOS Bazel".
+      - name: Run C++ MacOS Bazel
+        if: ${{ !cancelled() }}
+        uses: protocolbuffers/protobuf-ci/bazel@v7
+        with:
+          credentials: ${{ secrets.GAR_SERVICE_ACCOUNT }}
+          version: 8.7.0
+          bazel-cache: cpp_macos-15-bazel8
+          bash: >-
+            T=$RUNNER_TEMP/cpp.txt;
+            bash .github/scripts/shard_targets.sh $SHARD $NUM_SHARDS $T
+            //src/... //third_party/utf8_range/... //conformance:conformance_framework_tests &&
+            if [ -s $T ]; then
+            bazelisk $BAZEL_STARTUP_FLAGS test --target_pattern_file=$T --skip_incompatible_explicit_targets
+            $BAZEL_FLAGS;
+            else echo "No targets in this shard"; fi
+
+      # Previously test_cpp.yml `non-linux` "MacOS Intel Bazel".
+      - name: Run C++ MacOS Intel Bazel
+        if: ${{ !cancelled() }}
+        uses: protocolbuffers/protobuf-ci/bazel@v7
+        with:
+          credentials: ${{ secrets.GAR_SERVICE_ACCOUNT }}
+          version: 8.7.0
+          bazel-cache: cpp_macos-15-intel
+          bash: >-
+            T=$RUNNER_TEMP/cpp_intel.txt;
+            bash .github/scripts/shard_targets.sh $SHARD $NUM_SHARDS $T
+            //src/... //third_party/utf8_range/... //conformance:conformance_framework_tests &&
+            if [ -s $T ]; then
+            bazelisk $BAZEL_STARTUP_FLAGS test --cpu=darwin_x86_64 --target_pattern_file=$T --skip_incompatible_explicit_targets
+            $BAZEL_FLAGS;
+            else echo "No targets in this shard"; fi
+
+      # Previously test_bazel.yml `bazel-tests-windows-macos` (macos-15).
+      - name: Run Bazel Tests macos-15
+        if: ${{ !cancelled() }}
+        uses: protocolbuffers/protobuf-ci/bazel@v7
+        with:
+          credentials: ${{ secrets.GAR_SERVICE_ACCOUNT }}
+          version: 8.7.0
+          bazel-cache: bazel-tests-macos-15
+          bash: >-
+            T=$RUNNER_TEMP/bazel.txt;
+            bash .github/scripts/shard_targets.sh $SHARD $NUM_SHARDS $T
+            //bazel/... &&
+            if [ -s $T ]; then
+            bazelisk $BAZEL_STARTUP_FLAGS test --target_pattern_file=$T --skip_incompatible_explicit_targets
+            $BAZEL_FLAGS;
+            else echo "No targets in this shard"; fi
+
+      # ---- Python 3.12 host (upb + Python, Bazel 9.2.0) ----
+
+      - name: Setup Python
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: 'python/requirements.txt'
+
+      # Previously test_upb.yml `macos` "macOS".
+      - name: Run upb macOS
+        if: ${{ !cancelled() }}
+        uses: protocolbuffers/protobuf-ci/bazel@v7
+        with:
+          credentials: ${{ secrets.GAR_SERVICE_ACCOUNT }}
+          version: 9.2.0
+          bazel-cache: upb-bazel-macos
+          bash: >-
+            T=$RUNNER_TEMP/upb.txt;
+            bash .github/scripts/shard_targets.sh $SHARD $NUM_SHARDS $T
+            //benchmarks/... //lua/... //python/... //upb/... //upb_generator/... &&
+            if [ -s $T ]; then
+            bazelisk $BAZEL_STARTUP_FLAGS test
+            --//python:use_hermetic_python=true --@rules_python//python/config_settings:python_version=3.12
+            --target_pattern_file=$T --skip_incompatible_explicit_targets
+            $BAZEL_FLAGS;
+            else echo "No targets in this shard"; fi
+
+      # Previously test_upb.yml `macos` "macOS Intel".
+      - name: Run upb macOS Intel
+        if: ${{ !cancelled() }}
+        uses: protocolbuffers/protobuf-ci/bazel@v7
+        with:
+          credentials: ${{ secrets.GAR_SERVICE_ACCOUNT }}
+          version: 9.2.0
+          bazel-cache: upb-bazel-macos
+          bash: >-
+            T=$RUNNER_TEMP/upb_intel.txt;
+            bash .github/scripts/shard_targets.sh $SHARD $NUM_SHARDS $T
+            //benchmarks/... //lua/... //python/... //upb/... //upb_generator/... &&
+            if [ -s $T ]; then
+            bazelisk $BAZEL_STARTUP_FLAGS test --cpu=darwin_x86_64
+            --//python:use_hermetic_python=true --@rules_python//python/config_settings:python_version=3.12
+            --target_pattern_file=$T --skip_incompatible_explicit_targets
+            $BAZEL_FLAGS;
+            else echo "No targets in this shard"; fi
+
+      # Previously test_python.yml `macos` setup steps.
+      - name: Validate Python version
+        if: ${{ !cancelled() }}
+        run: python3 --version | grep 3.12 || (echo "Invalid Python version - $(python3 --version)" && exit 1)
+      - name: Create and start virtual environment
+        if: ${{ !cancelled() }}
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+
+      # Previously test_python.yml `macos` "MacOS Pure 3.12".
+      - name: Run Python MacOS Pure 3.12
+        if: ${{ !cancelled() }}
+        uses: protocolbuffers/protobuf-ci/bazel@v7
+        env:
+          KOKORO_PYTHON_VERSION: "3.12"
+        with:
+          credentials: ${{ secrets.GAR_SERVICE_ACCOUNT }}
+          version: 9.2.0
+          bazel-cache: python_macos/Pure_3.12
+          bash: >-
+            T=$RUNNER_TEMP/python_pure.txt;
+            bash .github/scripts/shard_targets.sh $SHARD $NUM_SHARDS $T
+            //python/... //python:python_version_test &&
+            if [ -s $T ]; then
+            bazelisk $BAZEL_STARTUP_FLAGS test
+            --//python:use_hermetic_python=true
+            --@rules_python//python/config_settings:python_version=3.12
+            --test_env=KOKORO_PYTHON_VERSION=3.12
+            --macos_minimum_os=12.0
+            --target_pattern_file=$T --skip_incompatible_explicit_targets
+            $BAZEL_FLAGS;
+            else echo "No targets in this shard"; fi
+
+      # Previously test_python.yml `macos` "MacOS C++ 3.12".
+      - name: Run Python MacOS C++ 3.12
+        if: ${{ !cancelled() }}
+        uses: protocolbuffers/protobuf-ci/bazel@v7
+        env:
+          KOKORO_PYTHON_VERSION: "3.12"
+        with:
+          credentials: ${{ secrets.GAR_SERVICE_ACCOUNT }}
+          version: 9.2.0
+          bazel-cache: python_macos/C++_3.12
+          bash: >-
+            T=$RUNNER_TEMP/python_cpp.txt;
+            bash .github/scripts/shard_targets.sh $SHARD $NUM_SHARDS $T
+            //python/... //python:python_version_test &&
+            if [ -s $T ]; then
+            bazelisk $BAZEL_STARTUP_FLAGS test --define=use_fast_cpp_protos=true
+            --//python:use_hermetic_python=true
+            --@rules_python//python/config_settings:python_version=3.12
+            --test_env=KOKORO_PYTHON_VERSION=3.12
+            --macos_minimum_os=12.0
+            --target_pattern_file=$T --skip_incompatible_explicit_targets
+            $BAZEL_FLAGS;
+            else echo "No targets in this shard"; fi
+
+      # ---- Ruby 4.0 host (Bazel 9.2.0) ----
+
+      # Previously test_ruby.yml `macos` setup steps.
+      - name: Pin Ruby version
+        if: ${{ !cancelled() }}
+        uses: ruby/setup-ruby@6e5d382445ae5590b7449d8b3bc8cb1c2c27f617 # v1.317.0
+        with:
+          ruby-version: "4.0"
+      - name: Validate Ruby version
+        if: ${{ !cancelled() }}
+        run: ruby --version | grep 4.0 || (echo "Invalid Ruby version - $(ruby --version)" && exit 1)
+
+      # Previously test_ruby.yml `macos` "MacOS Ruby 4.0".
+      - name: Run Ruby MacOS Ruby 4.0
+        if: ${{ !cancelled() }}
+        uses: protocolbuffers/protobuf-ci/bazel@v7
+        with:
+          credentials: ${{ secrets.GAR_SERVICE_ACCOUNT }}
+          version: 9.2.0
+          bazel-cache: ruby_macos/4.0
+          bash: >-
+            T=$RUNNER_TEMP/ruby.txt;
+            bash .github/scripts/shard_targets.sh $SHARD $NUM_SHARDS $T
+            //ruby/... &&
+            if [ -s $T ]; then
+            bazelisk $BAZEL_STARTUP_FLAGS test
+            --test_env=KOKORO_RUBY_VERSION=4.0 --test_env=BAZEL=true
+            --target_pattern_file=$T --skip_incompatible_explicit_targets
+            $BAZEL_FLAGS;
+            else echo "No targets in this shard"; fi
+
+      - name: Report disk usage
+        if: ${{ always() }}
+        run: df -h / && du -sh /private/var/tmp/_bazel_$(whoami) 2>/dev/null || true
