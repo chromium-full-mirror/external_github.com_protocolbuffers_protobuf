@@ -90,6 +90,8 @@ jobs:
             continuous-only: true
     name: ${{ matrix.continuous-only && inputs.continuous-prefix || '' }} CocoaPods ${{ matrix.PLATFORM }} ${{ matrix.CONFIGURATION }}
     runs-on: ${{ matrix.OS }}
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
       - name: Checkout pending changes
         uses: protocolbuffers/protobuf-ci/checkout@v2
